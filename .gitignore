@@ -1,0 +1,12 @@
+# Compiled binary (matches the module name)
+/ci-demo-go
+
+# Test / coverage output
+*.test
+*.out
+coverage.*
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
