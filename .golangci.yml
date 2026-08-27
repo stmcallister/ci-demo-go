@@ -1,0 +1,57 @@
+# golangci-lint configuration.
+#
+# This is deliberately thorough rather than minimal. The linters enabled below
+# are weighted toward the ones that need full type information and SSA
+# construction over the whole dependency graph (staticcheck, gosec, gocritic,
+# bodyclose, nilerr, prealloc) — that work is what makes the lint step take
+# real time, and what makes golangci-lint's own cache worth demonstrating.
+#
+# See README.md. The application is not the point.
+version: "2"
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose # SSA: tracks HTTP response bodies to their close
+    - copyloopvar
+    - durationcheck
+    - errorlint
+    - gocritic # broad; see enabled-tags below
+    - gosec # SSA: taint-style security rules
+    - misspell
+    - nilerr # SSA: return nil after a non-nil error check
+    - noctx
+    - prealloc # SSA: slice growth in range loops
+    - revive
+    - sqlclosecheck
+    - unconvert
+    - wastedassign
+    - whitespace
+
+  settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # noisy, and not what this repo is demonstrating
+
+  exclusions:
+    rules:
+      # Test files get a lighter touch: table-driven tests trip prealloc and
+      # error-wrapping rules constantly without saying anything useful.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - errorlint
+          - gosec
+          - noctx
+          - prealloc
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

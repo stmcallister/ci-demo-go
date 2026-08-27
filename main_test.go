@@ -17,7 +17,7 @@ func init() {
 
 func do(t *testing.T, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, nil)
+	req := httptest.NewRequest(method, path, http.NoBody)
 	rec := httptest.NewRecorder()
 	newRouter(zap.NewNop()).ServeHTTP(rec, req)
 	return rec

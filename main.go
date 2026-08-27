@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -38,9 +39,21 @@ func newRouter(log *zap.Logger) *gin.Engine {
 }
 
 func main() {
+	// main holds no defers of its own, so os.Exit here skips no cleanup — all
+	// of it lives in run.
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "fatal:", err)
+		os.Exit(1)
+	}
+}
+
+// run wires up the service and blocks until the server stops. It returns an
+// error rather than calling log.Fatal so that the deferred shutdown below
+// actually runs; log.Fatal calls os.Exit and defers never fire.
+func run() error {
 	log, err := zap.NewProduction()
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("logger: %w", err)
 	}
 	defer func() { _ = log.Sync() }()
 
@@ -50,7 +63,7 @@ func main() {
 	// collector present.
 	exp, err := otlptracegrpc.New(ctx)
 	if err != nil {
-		log.Fatal("otlp exporter", zap.Error(err))
+		return fmt.Errorf("otlp exporter: %w", err)
 	}
 	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exp))
 	otel.SetTracerProvider(tp)
@@ -64,7 +77,7 @@ func main() {
 	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
 		pool, err := pgxpool.New(ctx, dsn)
 		if err != nil {
-			log.Fatal("pgxpool", zap.Error(err))
+			return fmt.Errorf("pgxpool: %w", err)
 		}
 		defer pool.Close()
 	}
@@ -72,6 +85,8 @@ func main() {
 	addr := ":8080"
 	log.Info("listening", zap.String("addr", addr))
 	if err := newRouter(log).Run(addr); err != nil {
-		log.Fatal("server", zap.Error(err))
+		return fmt.Errorf("server: %w", err)
 	}
+
+	return nil
 }
