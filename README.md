@@ -38,9 +38,9 @@ dependency graph moved the runner's download step from 4s to 6s.
 
 Keep both figures in mind. The laptop number is what a developer feels on a
 cold clone, or what a self-hosted runner on a slower link would see. The
-runner number is what these workflows actually measure — and it is the reason
-this repo isolates the module cache from the build cache rather than
-celebrating a fast "cached" run and assuming download was the cause.
+runner number is what these workflows actually measure — and it is why the
+headline saving here turns out to be **compilation**, not download. See
+"Two caches" below.
 
 ### About the integration test
 
@@ -65,7 +65,7 @@ counts against cold download time.
 go build -tags kube ./...
 ```
 
-### Two caches, and why only one of them is cached here
+### Two caches, one switch
 
 Go keeps **two** separate caches:
 
@@ -74,53 +74,48 @@ Go keeps **two** separate caches:
 | Module cache | `~/go/pkg/mod` | downloaded dependencies (the 532 MB above) |
 | Build cache | `~/.cache/go-build` | compiled package archives |
 
-`actions/setup-go` with `cache: true` restores **both at once**. That is
-convenient in real life and useless for measurement: it conflates dependency
-download with compilation, so a fast "cached" run tells you nothing about
-which of the two you actually saved.
+`actions/setup-go` with `cache: true` restores **both at once**, off a single
+key derived from `go.sum`. That is what these workflows use, and it is what
+essentially every real Go pipeline uses. There is no separate `actions/cache`
+step in this repo.
 
-So both workflows here set `cache: false`, and the cached workflow restores
-`~/go/pkg/mod` itself with an explicit `actions/cache` step. `~/.cache/go-build`
-is **never** cached in either workflow. Compilation therefore starts cold on
-every run in both, and the only variable left is dependency download.
+Worth saying plainly, because it is the counter-intuitive part: on a
+GitHub-hosted runner most of the win is the **build cache**, not the module
+cache. Dependency download is only ~4–6s uncached, because GitHub's link to
+`proxy.golang.org` is very fast. Compilation is the expensive part, and that
+is what `cache: true` is really buying back.
 
-Expect build and test times to come out roughly equal across the two
-workflows. That is the experiment working, not a mistake.
+That is also why the two caches are not split apart here. Caching
+`~/go/pkg/mod` alone was measured on this graph and came out to roughly a
+13% delta — the ~5s spent restoring the cache almost exactly cancels the
+~6s of download it avoids. Not a demo worth showing.
 
 ## The two workflows
 
 | Workflow | File | Difference |
 | --- | --- | --- |
-| CI (no cache) | `.github/workflows/ci-no-cache.yml` | no module cache |
-| CI (with cache) | `.github/workflows/ci-cached.yml` | restores `~/go/pkg/mod` |
+| CI (no cache) | `.github/workflows/ci-no-cache.yml` | `cache: false` |
+| CI (with cache) | `.github/workflows/ci-cached.yml` | `cache: true` |
 
-The two files are **identical except for the workflow name and one added
-caching step**. Same runner, same Go version, same five steps in the same
-order, same build and test commands. The entire diff:
+The two files are **identical except for the workflow name and one line of
+caching config**. Same runner, same Go version, same five steps in the same
+order, same build and test commands. The entire diff is two hunks, and one of
+them is the name:
 
 ```diff
 -name: CI (no cache)
 +name: CI (with cache)
 @@
-           cache: false
- 
-+      - name: Restore module cache
-+        uses: actions/cache@v4
-+        with:
-+          path: ~/go/pkg/mod
-+          key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
-+
-       - name: Dependency download
-         run: go mod download
+           go-version: '1.26'
+-          cache: false
++          cache: true
 ```
-
-Note there are no `restore-keys`. A partial cache hit would leave a half-warm
-module cache and blur the two conditions together; this way it's a clean hit
-or a clean miss on the `go.sum` hash.
 
 Every step is explicitly named — **Checkout, Setup, Dependency download,
 Build, Test** — and named identically in both files, so step-level timings map
 one-to-one onto budget segments instead of collapsing into an "other" bucket.
+`go mod download` stays its own step even though it is no longer the headline
+number, because you want to *see* it be small rather than take my word for it.
 
 ### One caveat worth knowing on stage
 

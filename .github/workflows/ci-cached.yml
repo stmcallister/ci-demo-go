@@ -13,21 +13,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-          # Off deliberately. setup-go's built-in cache covers the module cache
-          # AND the build cache together, which conflates dependency download
-          # with compilation. The cached workflow restores the module cache on
-          # its own so the two can be measured separately.
-          cache: false
-
-      # Module cache only. ~/.cache/go-build is deliberately NOT cached, so
-      # compilation starts cold in both workflows and the only variable left
-      # is dependency download. No restore-keys: a partial hit would leave a
-      # half-warm module cache and muddy the measurement.
-      - name: Restore module cache
-        uses: actions/cache@v4
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
+          cache: true
 
       - name: Dependency download
         run: go mod download
