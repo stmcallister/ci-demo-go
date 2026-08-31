@@ -9,23 +9,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: Setup
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          # Off deliberately. setup-go's built-in cache covers the module cache
+          # AND the build cache together, which conflates dependency download
+          # with compilation. The cached workflow restores the module cache on
+          # its own so the two can be measured separately.
           cache: false
 
-      - name: Download dependencies
+      - name: Dependency download
         run: go mod download
 
       - name: Build
         run: go build ./...
 
-      - name: Lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.13.1
-          skip-cache: true
-
       - name: Test
-        run: go test -race ./...
+        run: go test ./...

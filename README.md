@@ -31,7 +31,16 @@ Measured cold, with an empty module cache:
 213 modules · 532 MB · go mod download ≈ 82s
 ```
 
-That 82 seconds is the thing the talk is about.
+**That 82s is a laptop number, and it does not reproduce on a GitHub runner.**
+Measured on `ubuntu-latest`, the same 532 MB downloads in **4–6s** — GitHub
+sits on a very fat pipe to `proxy.golang.org`. Tripling the size of this
+dependency graph moved the runner's download step from 4s to 6s.
+
+Keep both figures in mind. The laptop number is what a developer feels on a
+cold clone, or what a self-hosted runner on a slower link would see. The
+runner number is what these workflows actually measure — and it is the reason
+this repo isolates the module cache from the build cache rather than
+celebrating a fast "cached" run and assuming download was the cause.
 
 ### About the integration test
 
@@ -56,53 +65,62 @@ counts against cold download time.
 go build -tags kube ./...
 ```
 
-### Two caches, not one
+### Two caches, and why only one of them is cached here
 
-`go mod download` is only half the story. Go keeps a **module cache**
-(`~/go/pkg/mod`, the 532 MB above) and a **build cache** (`~/.cache/go-build`,
-compiled package archives). `actions/setup-go` with `cache: true` restores
-both. Two steps in these workflows exist specifically to put weight on the
-second one:
+Go keeps **two** separate caches:
 
-- **`go test -race`** — race instrumentation forces a full recompile of the
-  entire dependency tree into its own build cache entry.
-- **`golangci-lint`** — typechecks and runs SSA analysis over the whole graph.
-  `.golangci.yml` deliberately leans on the analyzers that need that (gosec,
-  gocritic, bodyclose, nilerr, prealloc). It also keeps its *own* cache,
-  separate from Go's, which is why the workflows toggle `skip-cache` alongside
-  `cache`.
+| Cache | Path | Holds |
+| --- | --- | --- |
+| Module cache | `~/go/pkg/mod` | downloaded dependencies (the 532 MB above) |
+| Build cache | `~/.cache/go-build` | compiled package archives |
+
+`actions/setup-go` with `cache: true` restores **both at once**. That is
+convenient in real life and useless for measurement: it conflates dependency
+download with compilation, so a fast "cached" run tells you nothing about
+which of the two you actually saved.
+
+So both workflows here set `cache: false`, and the cached workflow restores
+`~/go/pkg/mod` itself with an explicit `actions/cache` step. `~/.cache/go-build`
+is **never** cached in either workflow. Compilation therefore starts cold on
+every run in both, and the only variable left is dependency download.
+
+Expect build and test times to come out roughly equal across the two
+workflows. That is the experiment working, not a mistake.
 
 ## The two workflows
 
 | Workflow | File | Difference |
 | --- | --- | --- |
-| CI (no cache) | `.github/workflows/ci-no-cache.yml` | `cache: false`, `skip-cache: true` |
-| CI (with cache) | `.github/workflows/ci-cached.yml` | `cache: true`, `skip-cache: false` |
+| CI (no cache) | `.github/workflows/ci-no-cache.yml` | no module cache |
+| CI (with cache) | `.github/workflows/ci-cached.yml` | restores `~/go/pkg/mod` |
 
-The two files are **identical except for the workflow name and the caching
-config**. Same runner, same Go version, same steps in the same order, same
-lint and test commands. The entire diff is three hunks, and the two real ones
-are both booleans:
+The two files are **identical except for the workflow name and one added
+caching step**. Same runner, same Go version, same five steps in the same
+order, same build and test commands. The entire diff:
 
 ```diff
 -name: CI (no cache)
 +name: CI (with cache)
 @@
--          cache: false
-+          cache: true
-@@
--          skip-cache: true
-+          skip-cache: false
+           cache: false
+ 
++      - name: Restore module cache
++        uses: actions/cache@v4
++        with:
++          path: ~/go/pkg/mod
++          key: ${{ runner.os }}-gomod-${{ hashFiles('**/go.sum') }}
++
+       - name: Dependency download
+         run: go mod download
 ```
 
-The second boolean is golangci-lint's own cache. It's a separate mechanism
-from `actions/setup-go`'s, and turning off only one of them would compare a
-half-cached pipeline against an uncached one. The honest version of this demo
-is "cache everything" vs "cache nothing" — which is also the more useful
-message: caching isn't one checkbox, it's a per-tool discipline.
+Note there are no `restore-keys`. A partial cache hit would leave a half-warm
+module cache and blur the two conditions together; this way it's a clean hit
+or a clean miss on the `go.sum` hash.
 
-Dependency download is its own step, separate from build and test, so
-step-level timings map cleanly onto budget segments.
+Every step is explicitly named — **Checkout, Setup, Dependency download,
+Build, Test** — and named identically in both files, so step-level timings map
+one-to-one onto budget segments instead of collapsing into an "other" bucket.
 
 ### One caveat worth knowing on stage
 
